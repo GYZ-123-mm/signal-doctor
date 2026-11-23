@@ -232,14 +232,20 @@ function extractFeatures(series) {
   const std = Math.sqrt(variance);
 
   // 差分绝对均值：反映抖动
-  let diffSum = 0, spikes = 0;
+  let diffSum = 0, spikes = 0, downSpikes = 0;
   for (let i = 1; i < n; i++) {
-    const d = Math.abs(series[i] - series[i - 1]);
-    diffSum += d;
-    if (d > 6) spikes++;   // 突变点
+    const d = series[i] - series[i - 1];
+    diffSum += Math.abs(d);
+    if (Math.abs(d) > 6) {
+      spikes++;
+      if (d < 0) downSpikes++;   // 向下突刺（干扰的典型形态）
+    }
   }
   const jitter = diffSum / (n - 1);
   const spikeRate = spikes / (n - 1);
+  // 突刺的方向性：干扰几乎都是"信号骤降"的向下尖刺；
+  // 多径是平滑起伏，差分不会集中在单侧。该比值用于区分二者。
+  const downSpikeRatio = spikes > 0 ? downSpikes / spikes : 0;
 
   // 周期性强度：用自相关找主导周期
   let bestCorr = 0, bestLag = 0;
@@ -251,10 +257,11 @@ function extractFeatures(series) {
     if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
   }
 
-  // 真正的周期性判据：不仅自相关高，而且低抖动。
-  // 纯噪声或频繁突刺的序列也会偶然出现较高的自相关峰值，
-  // 但真实的多径衰落是一条平滑的周期曲线，抖动必然很小。
-  const isPeriodic = bestCorr > 0.75 && jitter < 4.5;
+  // 真正的周期性判据：自相关需达到 0.85 以上 + 抖动小 + 不存在单侧尖刺。
+  // 实测真实多径的 bestCorr 稳定在 0.90 以上，而干扰与故障序列即便偶然
+  // 出现自相关峰值，也很少超过 0.85；提高阈值可显著减少偶发误判。
+  const isPeriodic = bestCorr > 0.85 && jitter < 4.5
+    && (spikeRate < 0.10 || downSpikeRatio < 0.65);
 
   // 低频趋势：前半段 vs 后半段
   const half = Math.floor(n / 2);
@@ -262,7 +269,7 @@ function extractFeatures(series) {
   const secondHalf = series.slice(half).reduce((a, b) => a + b, 0) / (n - half);
   const drift = secondHalf - firstHalf;
 
-  return { mean, std, jitter, spikeRate, bestCorr, bestLag, drift, n, isPeriodic };
+  return { mean, std, jitter, spikeRate, bestCorr, bestLag, drift, n, isPeriodic, downSpikeRatio };
 }
 
 /* ============================================================
@@ -277,7 +284,9 @@ function diagnose(features, sigType, givenLoss = null) {
   //   邻频干扰: jitter 5.0~9.4, spikeRate 0.29~0.51, bestCorr 0.16~0.46, mean -68
   //   多径衰落: jitter 2.2~3.2, spikeRate 0.03~0.13, bestCorr 0.90~1.00, mean -71
   //   设备故障: jitter 10.2~15.0, spikeRate 0.59~0.85, bestCorr 0.15~0.37, mean -80
-  const periodicity = isPeriodic ? clamp01((bestCorr - 0.55) / 0.35) : 0;
+  // 真实的多径特征：自相关极高（0.90 以上）且平滑；
+  // 若只是中间区间的偶然相关，不应当作多径依据。
+  const periodicity = isPeriodic ? clamp01((bestCorr - 0.72) / 0.23) : 0;
   const levelHealth = clamp01((mean + 82) / 22);          // -82dBm→0，-60dBm→1
   const weakLevel = clamp01((-mean - 72) / 12);           // 低于 -72dBm 开始显著
 
@@ -289,8 +298,8 @@ function diagnose(features, sigType, givenLoss = null) {
     (clamp01((jitter - 3.5) / 4.5) * 50 + clamp01((spikeRate - 0.2) / 0.25) * 50)
     * (0.25 + 0.75 * levelHealth) * (1 - periodicity * 0.85);
 
-  // 多径衰落：强周期性是决定性特征，辅以中等抖动
-  scores.multipath = periodicity * 85 + clamp01(jitter / 8) * 15 * (1 - periodicity);
+  // 多径衰落：强周期性是决定性特征；非周期序列不应因抖动而得分
+  scores.multipath = periodicity * 85;
 
   // 设备/链路故障：电平极低 + 抖动极大 + 突刺率高 + 无明显周期性
   scores.fault =
@@ -604,15 +613,4 @@ document.getElementById("btnRandom").addEventListener("click", () => {
 });
 
 // 首屏自动跑一次，让页面一打开就有内容（默认：样例 B 邻频干扰）
-window.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("samplePick").value = "1";
-  analyze();
-});
-// 若脚本在 DOM 就绪后才执行，DOMContentLoaded 不会再次触发，补一次兜底
-if (document.readyState === "complete" || document.readyState === "interactive") {
-  document.getElementById("samplePick").value = "1";
-  analyze();
-}
-</script>
-</body>
-</html>
+window.addEv
