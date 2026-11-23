@@ -170,7 +170,7 @@
     <div class="result-grid">
       <div class="metric"><div class="k">信号质量评分</div><div class="v" id="mScore">--</div></div>
       <div class="metric"><div class="k">平均 RSSI</div><div class="v" id="mRssiOut">--</div></div>
-      <div class="metric"><div class="k">估算丢包率</div><div class="v" id="mLossOut">--</div></div>
+      <div class="metric"><div class="k" id="kLoss">丢包率</div><div class="v" id="mLossOut">--</div></div>
       <div class="metric"><div class="k">稳定性</div><div class="v" id="mStab">--</div></div>
     </div>
 
@@ -268,7 +268,7 @@ function extractFeatures(series) {
 /* ============================================================
    3. 诊断引擎：加权规则打分 → 输出各病因概率
    ============================================================ */
-function diagnose(features, sigType) {
+function diagnose(features, sigType, givenLoss = null) {
   const { mean, std, jitter, spikeRate, bestCorr, drift, isPeriodic } = features;
   const scores = {};
 
@@ -297,6 +297,14 @@ function diagnose(features, sigType) {
     (weakLevel * 40 + clamp01((jitter - 8) / 6) * 40 + clamp01((spikeRate - 0.5) / 0.3) * 20)
     * (1 - periodicity * 0.8);
 
+  // 已知丢包率偏高而信号本身无明显异常时，应指向链路/设备故障
+  // （丢包高但波形干净，通常是链路层或设备侧的问题，而不是干扰或多径）
+  if (givenLoss !== null && Number.isFinite(givenLoss) && givenLoss > 3) {
+    const excess = clamp01((givenLoss - 3) / 9);
+    const waveClean = (1 - clamp01((jitter - 2) / 4)) * (1 - periodicity);
+    scores.fault += excess * waveClean * 70;
+  }
+
   // 频率相关的先验修正
   if (sigType === "wifi24") scores.interference *= 1.2;
   if (sigType === "wifi5") scores.weakCoverage *= 1.15;
@@ -315,8 +323,12 @@ function diagnose(features, sigType) {
 
   // 链路健康判定：四类病因得分都很低时，不应强行归入某类病因。
   // 判据：电平良好 + 抖动小 + 突刺少 + 无周期性 + 综合评分过关。
-  const healthy =
+  // 若数据来源已明确给出丢包率（手动/样例），丢包超过 3% 也不再判为健康——
+  // 高丢包本身就说明链路存在问题，应该走病因分析给出处置建议。
+  const baseHealthy =
     mean > -68 && jitter < 3.2 && spikeRate < 0.12 && !isPeriodic && quality >= 62;
+  const lossOk = (givenLoss === null || !Number.isFinite(givenLoss)) ? true : givenLoss <= 3;
+  const healthy = baseHealthy && lossOk;
 
   return { probs, quality, strengthScore, stabilityScore, interferenceScore, healthy };
 }
@@ -453,7 +465,8 @@ function getSeries() {
   if (src === "sample") {
     const idx = Number(document.getElementById("samplePick").value);
     const keys = ["normal", "neighbor", "multipath", "faulty"];
-    return generateSignal(PROFILES[keys[idx]]);
+    const p = PROFILES[keys[idx]];
+    return { series: generateSignal(p), sourceLoss: p.loss };
   }
   if (src === "manual") {
     const rssi = Number(document.getElementById("mRssi").value);
@@ -470,29 +483,32 @@ function getSeries() {
       interfere: clamp01((24 - snr) / 20) * 22,
       multipath: 0.8,
     };
-    return generateSignal(profile);
+    return { series: generateSignal(profile), sourceLoss: loss };
   }
   const raw = document.getElementById("pasteData").value;
   const arr = raw.split(/[\s,，;；]+/).map(Number).filter(v => !isNaN(v) && v < 0);
-  return arr.length >= 8 ? arr : null;
+  return arr.length >= 8 ? { series: arr, sourceLoss: null } : null;
 }
 
 function analyze() {
-  const series = getSeries();
-  if (!series) {
+  const got = getSeries();
+  if (!got) {
     alert("请粘贴至少 8 个有效的 RSSI 负值（如 -62,-63,...）");
     return;
   }
-  runDiagnosis(series);
+  runDiagnosis(got.series, got.sourceLoss);
 }
 
-/** 对给定的信号序列执行诊断并渲染结果 */
-function runDiagnosis(series) {
+/** 对给定的信号序列执行诊断并渲染结果
+ *  @param series 信号序列
+ *  @param sourceLoss 数据来源已知的丢包率（样例/手动模式），未知时传 null 表示由特征估算
+ */
+function runDiagnosis(series, sourceLoss = null) {
   currentSeries = series;
 
   const sigType = document.getElementById("sigType").value;
   const features = extractFeatures(series);
-  const result = diagnose(features, sigType);
+  const result = diagnose(features, sigType, sourceLoss);
 
   drawWave(series);
   drawSpectrum(series);
@@ -502,8 +518,14 @@ function runDiagnosis(series) {
   document.getElementById("mScore").style.color =
     result.quality >= 75 ? "var(--ok)" : result.quality >= 45 ? "var(--warn)" : "var(--bad)";
   document.getElementById("mRssiOut").textContent = features.mean.toFixed(1) + " dBm";
-  const lossEst = clamp01((features.spikeRate * 1.2) + (Math.abs(features.mean + 90) / 100)) * 18;
-  document.getElementById("mLossOut").textContent = lossEst.toFixed(1) + "%";
+  // 丢包率：有已知来源值时直接采用，避免与输入参数不一致；
+  // 仅当来源未知（粘贴实测序列）时才由信号特征估算。
+  const lossVal = (sourceLoss !== null && Number.isFinite(sourceLoss))
+    ? sourceLoss
+    : clamp01((features.spikeRate * 1.2) + (Math.abs(features.mean + 90) / 100)) * 18;
+  const lossFromSource = (sourceLoss !== null && Number.isFinite(sourceLoss));
+  document.getElementById("kLoss").textContent = lossFromSource ? "丢包率（输入）" : "丢包率（估算）";
+  document.getElementById("mLossOut").textContent = lossVal.toFixed(1) + "%";
   document.getElementById("mStab").textContent =
     features.std < 3 ? "稳定" : features.std < 7 ? "一般" : "波动大";
 
@@ -573,11 +595,12 @@ document.getElementById("btnAnalyze").addEventListener("click", analyze);
 document.getElementById("btnRandom").addEventListener("click", () => {
   const keys = Object.keys(PROFILES);
   const k = keys[Math.floor(Math.random() * keys.length)];
-  const s = generateSignal(PROFILES[k]);
+  const p = PROFILES[k];
+  const s = generateSignal(p);
   currentSeries = s;
   // 直接展示随机生成的信号并诊断，不再改写用户已选的输入方式
   document.getElementById("pasteData").value = s.map(v => v.toFixed(1)).join(",");
-  runDiagnosis(s);
+  runDiagnosis(s, p.loss);
 });
 
 // 首屏自动跑一次，让页面一打开就有内容（默认：样例 B 邻频干扰）

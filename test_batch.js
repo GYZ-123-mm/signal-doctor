@@ -59,3 +59,4 @@ for (const [key, expectTop, label] of cases) {
 rows.forEach(r => console.log(r));
 console.log(`\n总体正确率: ${totalCorrect}/${totalRuns} = ${(totalCorrect / totalRuns * 100).toFixed(1)}%`);
 
+
