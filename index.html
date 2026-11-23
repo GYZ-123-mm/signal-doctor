@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>信号医生 · 无线信号质量智能诊断</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel2: #273449;
+    --line: #334155;
+    --text: #e2e8f0;
+    --sub: #94a3b8;
+    --accent: #38bdf8;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  header {
+    padding: 22px 28px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(120deg, #0f172a, #16233b 60%, #1b2b45);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
+  header .tag { color: var(--accent); font-size: 13px; border: 1px solid var(--accent); padding: 1px 8px; border-radius: 999px; }
+  header .sub { color: var(--sub); font-size: 13px; margin-left: auto; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 12px; font-size: 15px; color: var(--accent); font-weight: 600; letter-spacing: .5px; }
+  label { display: block; font-size: 13px; color: var(--sub); margin: 10px 0 4px; }
+  select, input[type=number], textarea {
+    width: 100%; background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 8px 10px; font-size: 14px; font-family: inherit;
+  }
+  textarea { min-height: 110px; resize: vertical; font-family: Consolas, monospace; font-size: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button {
+    cursor: pointer; border: none; border-radius: 8px; padding: 10px 16px;
+    font-size: 14px; font-weight: 600; font-family: inherit; transition: .2s;
+  }
+  .primary { background: var(--accent); color: #04202f; }
+  .primary:hover { filter: brightness(1.12); }
+  .ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  .ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btns { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  canvas { width: 100%; height: 220px; background: #0b1220; border-radius: 8px; display: block; }
+  .result-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 700px) { .result-grid { grid-template-columns: 1fr 1fr; } }
+  .metric { background: var(--panel2); border-radius: 8px; padding: 10px 12px; }
+  .metric .k { font-size: 12px; color: var(--sub); }
+  .metric .v { font-size: 20px; font-weight: 700; }
+  .verdict { border-radius: 10px; padding: 14px 16px; margin-top: 6px; border-left: 4px solid var(--accent); background: var(--panel2); }
+  .verdict .title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .verdict ul { margin: 8px 0 0; padding-left: 20px; font-size: 14px; }
+  .verdict li { margin: 4px 0; }
+  .bars { margin-top: 14px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 13px; }
+  .bar-row .name { width: 84px; color: var(--sub); flex-shrink: 0; }
+  .bar-track { flex: 1; height: 10px; background: #0b1220; border-radius: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; transition: width .5s; }
+  .bar-row .val { width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+  .hint { font-size: 12px; color: var(--sub); margin-top: 8px; }
+  footer { text-align: center; color: var(--sub); font-size: 12px; padding: 20px; border-top: 1px solid var(--line); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--sub); margin-top: 8px; flex-wrap: wrap; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>信号医生 <span style="font-size:14px;color:var(--sub);font-weight:400;">Signal Doctor</span></h1>
+  <span class="tag">无线信号质量智能诊断</span>
+  <span class="sub">《人工智能基础与应用》课程大作业 · 纯前端实现 · 无需联网推理</span>
+</header>
+
+<main>
+  <div class="grid">
+    <!-- 左：输入 -->
+    <section class="card">
+      <h2>① 信号输入</h2>
+      <div class="row">
+        <div>
+          <label>信号类型</label>
+          <select id="sigType">
+            <option value="wifi24">WiFi 2.4GHz（信道拥挤）</option>
+            <option value="wifi5">WiFi 5GHz（覆盖受限）</option>
+            <option value="lte">5G / LTE 移动网络（同频干扰）</option>
+          </select>
+        </div>
+        <div>
+          <label>数据来源</label>
+          <select id="srcType">
+            <option value="sample">内置样例信号</option>
+            <option value="paste">粘贴实测序列（逗号或换行分隔）</option>
+            <option value="manual">手动调参生成</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="sampleBox">
+        <label>选择样例</label>
+        <select id="samplePick">
+          <option value="0">样例 A：正常链路</option>
+          <option value="1">样例 B：邻频干扰</option>
+          <option value="2">样例 C：多径衰落</option>
+          <option value="3">样例 D：设备故障 / 丢包</option>
+        </select>
+      </div>
+
+      <div id="manualBox" style="display:none;">
+        <div class="row">
+          <div>
+            <label>主信号强度 RSSI（dBm，-30 ~ -95）</label>
+            <input type="number" id="mRssi" value="-62" step="1" />
+          </div>
+          <div>
+            <label>信噪比 SNR（dB，0 ~ 40）</label>
+            <input type="number" id="mSnr" value="22" step="1" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>固有丢包率（%）</label>
+            <input type="number" id="mLoss" value="0.5" step="0.1" />
+          </div>
+          <div>
+            <label>波动幅度（dB）</label>
+            <input type="number" id="mJitter" value="2" step="0.5" />
+          </div>
+        </div>
+      </div>
+
+      <div id="pasteBox" style="display:none;">
+        <label>粘贴 RSSI 序列（dBm，建议 40~200 个点）</label>
+        <textarea id="pasteData" placeholder="例如：-62,-63,-61,-64,-62,..."></textarea>
+      </div>
+
+      <div class="btns">
+        <button class="primary" id="btnAnalyze">开始诊断</button>
+        <button class="ghost" id="btnRandom">随机生成</button>
+      </div>
+      <div class="hint">说明：所有计算都在浏览器本地完成，上传的数据不会离开你的设备。</div>
+    </section>
+
+    <!-- 右：可视化 -->
+    <section class="card">
+      <h2>② 信号波形与频谱</h2>
+      <canvas id="wave" width="720" height="220"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#38bdf8"></i>RSSI 时序</span>
+        <span><i class="dot" style="background:#fbbf24"></i>干扰频段能量</span>
+      </div>
+      <div style="margin-top:12px;">
+        <canvas id="spec" width="720" height="110" style="height:110px;"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <!-- 诊断结果 -->
+  <section class="card" style="margin-top:18px;">
+    <h2>③ 诊断结论</h2>
+    <div class="result-grid">
+      <div class="metric"><div class="k">信号质量评分</div><div class="v" id="mScore">--</div></div>
+      <div class="metric"><div class="k">平均 RSSI</div><div class="v" id="mRssiOut">--</div></div>
+      <div class="metric"><div class="k">估算丢包率</div><div class="v" id="mLossOut">--</div></div>
+      <div class="metric"><div class="k">稳定性</div><div class="v" id="mStab">--</div></div>
+    </div>
+
+    <div class="verdict" id="verdict">
+      <div class="title" id="vTitle">等待诊断…</div>
+      <div id="vDesc" style="font-size:14px;color:var(--sub)">点击「开始诊断」查看分析结果。</div>
+      <ul id="vSuggest"></ul>
+    </div>
+
+    <div class="bars" id="bars"></div>
+  </section>
+</main>
+
+<footer>信号医生 · 基于规则的频谱特征诊断（AI 辅助开发） · 数据仅在本机处理</footer>
+
+<script>
+/* ============================================================
+   1. 信号生成：用参数化模型合成带噪声的 RSSI 序列
+   ============================================================ */
+const randn = () => {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
+
+// 不同场景的参数：干扰幅度、衰减、丢包、周期性衰减（多径）
+const PROFILES = {
+  normal:   { rssi: -58, snr: 26, loss: 0.3, jitter: 1.5, interfere: 2,  multipath: 1.0 },
+  neighbor: { rssi: -66, snr: 12, loss: 4.5, jitter: 4.0, interfere: 26, multipath: 0.8 },
+  multipath:{ rssi: -72, snr: 17, loss: 3.0, jitter: 2.0, interfere: 3,  multipath: 11.0 },
+  faulty:   { rssi: -80, snr: 5,  loss: 14,  jitter: 11,  interfere: 6,  multipath: 2.0 },
+};
+
+function generateSignal(profile, n = 120, rssiOverride = null) {
+  const p = { ...profile };
+  if (rssiOverride !== null) p.rssi = rssiOverride;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / n;
+    // 周期性衰落（多径）
+    const fade = p.multipath * Math.sin(2 * Math.PI * 3.3 * t + 0.7);
+    // 干扰尖峰（随机突发）
+    const spike = (Math.random() < 0.08) ? p.interfere * (0.6 + Math.random() * 0.8) : 0;
+    const v = p.rssi + fade - spike + randn() * p.jitter;
+    out.push(Math.max(-100, Math.min(-25, v)));
+  }
+  return out;
+}
+
+/* ============================================================
+   2. 特征提取：从序列中计算可解释的特征
+   ============================================================ */
+function extractFeatures(series) {
+  const n = series.length;
+  const mean = series.reduce((a, b) => a + b, 0) / n;
+  const variance = series.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
+  const std = Math.sqrt(variance);
+
+  // 差分绝对均值：反映抖动
+  let diffSum = 0, spikes = 0;
+  for (let i = 1; i < n; i++) {
+    const d = Math.abs(series[i] - series[i - 1]);
+    diffSum += d;
+    if (d > 6) spikes++;   // 突变点
+  }
+  const jitter = diffSum / (n - 1);
+  const spikeRate = spikes / (n - 1);
+
+  // 周期性强度：用自相关找主导周期
+  let bestCorr = 0, bestLag = 0;
+  const lagMin = 6, lagMax = Math.floor(n / 2);
+  for (let lag = lagMin; lag <= lagMax; lag++) {
+    let s = 0;
+    for (let i = 0; i + lag < n; i++) s += (series[i] - mean) * (series[i + lag] - mean);
+    const corr = s / ((n - lag) * (variance || 1));
+    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  }
+
+  // 低频趋势：前半段 vs 后半段
+  const half = Math.floor(n / 2);
+  const firstHalf = series.slice(0, half).reduce((a, b) => a + b, 0) / half;
+  const secondHalf = series.slice(half).reduce((a, b) => a + b, 0) / (n - half);
+  const drift = secondHalf - firstHalf;
+
+  return { mean, std, jitter, spikeRate, bestCorr, bestLag, drift, n };
+}
+
+/* ============================================================
+   3. 诊断引擎：加权规则打分 → 输出各病因概率
+   ============================================================ */
+function diagnose(features, sigType) {
+  const { mean, std, jitter, spikeRate, bestCorr, drift } = features;
+  const scores = {};
+
+  // 阈值依据 30 次随机采样得到的特征分布（见报告「四、作品成果展示」的验证数据）：
+  //   正常链路: jitter 1.4~2.1, spikeRate 0~0.06, bestCorr 0.20~0.41, mean -58
+  //   邻频干扰: jitter 5.0~9.4, spikeRate 0.29~0.51, bestCorr 0.16~0.46, mean -68
+  //   多径衰落: jitter 2.2~3.2, spikeRate 0.03~0.13, bestCorr 0.90~1.00, mean -71
+  //   设备故障: jitter 10.2~15.0, spikeRate 0.59~0.85, bestCorr 0.15~0.37, mean -80
+  const periodicity = clamp01((bestCorr - 0.55) / 0.35);  // >0.9 视为强周期性
+  const levelHealth = clamp01((mean + 82) / 22);          // -82dBm→0，-60dBm→1
+  const weakLevel = clamp01((-mean - 72) / 12);           // 低于 -72dBm 开始显著
+
+  // 弱覆盖：信号强度低，但抖动大时更可能是设备问题
+  scores.weakCoverage = clamp01((-mean - 62) / 22) * 100 * (1 - clamp01((jitter - 6) / 8) * 0.85);
+
+  // 同频/邻频干扰：高抖动 + 高突刺率，且电平尚未严重衰减、且无周期性
+  scores.interference =
+    (clamp01((jitter - 3.5) / 4.5) * 50 + clamp01((spikeRate - 0.2) / 0.25) * 50)
+    * (0.25 + 0.75 * levelHealth) * (1 - periodicity * 0.85);
+
+  // 多径衰落：强周期性是决定性特征，辅以中等抖动
+  scores.multipath = periodicity * 85 + clamp01(jitter / 8) * 15 * (1 - periodicity);
+
+  // 设备/链路故障：电平极低 + 抖动极大 + 突刺率高 + 无明显周期性
+  scores.fault =
+    (weakLevel * 40 + clamp01((jitter - 8) / 6) * 40 + clamp01((spikeRate - 0.5) / 0.3) * 20)
+    * (1 - periodicity * 0.8);
+
+  // 频率相关的先验修正
+  if (sigType === "wifi24") scores.interference *= 1.2;
+  if (sigType === "wifi5") scores.weakCoverage *= 1.15;
+  if (sigType === "lte") scores.multipath *= 1.2;
+
+  // 归一化
+  const total = Object.values(scores).reduce((a, b) => a + b, 0) || 1;
+  const probs = {};
+  for (const k in scores) probs[k] = Math.round((scores[k] / total) * 100);
+
+  // 质量评分：信号强度 40% + 稳定性 35% + 干扰 25%
+  const strengthScore = clamp01((mean + 90) / 50) * 100;
+  const stabilityScore = clamp01(1 - std / 12) * 100;
+  const interferenceScore = clamp01(1 - jitter / 9) * 100;
+  const quality = Math.round(strengthScore * 0.4 + stabilityScore * 0.35 + interferenceScore * 0.25);
+
+  return { probs, quality, strengthScore, stabilityScore, interferenceScore };
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, x));
+
+/* ============================================================
+   4. 报告生成：把诊断结果翻译成可执行的建议
+   ============================================================ */
+const CAUSE_META = {
+  weakCoverage: {
+    name: "弱覆盖 / 信号衰减",
+    color: "#f87171",
+    suggest: [
+      "缩短设备与路由器/基站的物理距离，或在薄弱区域增加一个接入点。",
+      "检查墙体、金属柜、微波炉等障碍物是否挡住信号路径。",
+      "5GHz 穿透力弱，穿墙场景优先切换到 2.4GHz。",
+    ],
+  },
+  interference: {
+    name: "同频 / 邻频干扰",
+    color: "#fbbf24",
+    suggest: [
+      "用信道扫描工具查看周边占用情况，把 WiFi 信道改为拥挤度最低的（2.4G 建议 1/6/11）。",
+      "关闭附近同频设备（无线鼠标、蓝牙音箱、微波炉等）。",
+      "高密度场景可考虑 5GHz 或启用 160MHz 频宽以外的错峰配置。",
+    ],
+  },
+  multipath: {
+    name: "多径衰落 / 移动干扰",
+    color: "#38bdf8",
+    suggest: [
+      "信号存在明显周期性起伏，常见于移动中或存在反射面（玻璃幕墙、水面）。",
+      "固定使用场景下调整天线角度或位置，避开强反射路径。",
+      "开启 MIMO 或波束赋形能力可有效缓解多径影响。",
+    ],
+  },
+  fault: {
+    name: "设备 / 链路故障",
+    color: "#a78bfa",
+    suggest: [
+      "信号整体偏低且持续下滑，优先排查网卡驱动、天线接口与光猫/CPE 状态。",
+      "重启网络设备后复测；若仍异常，考虑更换网线或检查路由器电源适配器。",
+      "丢包率高时，用 ping / traceroute 定位是本地链路还是上行带宽问题。",
+    ],
+  },
+};
+
+/* ============================================================
+   5. 绘图：波形与频谱
+   ============================================================ */
+function drawWave(series) {
+  const c = document.getElementById("wave");
+  const ctx = c.getContext("2d");
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const min = -100, max = -25;
+  const y = v => H - ((v - min) / (max - min)) * (H - 24) - 12;
+
+  // 网格
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 1;
+  for (let g = -25; g >= -100; g -= 25) {
+    ctx.beginPath(); ctx.moveTo(0, y(g)); ctx.lineTo(W, y(g)); ctx.stroke();
+    ctx.fillStyle = "#64748b"; ctx.font = "10px sans-serif";
+    ctx.fillText(g + "dBm", 4, y(g) - 3);
+  }
+
+  // 折线
+  ctx.beginPath();
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 1.8;
+  for (let i = 0; i < series.length; i++) {
+    const x = (i / (series.length - 1)) * W;
+    const yy = y(series[i]);
+    i === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+  }
+  ctx.stroke();
+
+  // 均线
+  const mean = series.reduce((a, b) => a + b, 0) / series.length;
+  ctx.beginPath();
+  ctx.setLineDash([5, 5]);
+  ctx.strokeStyle = "#fbbf24";
+  ctx.lineWidth = 1.2;
+  ctx.moveTo(0, y(mean)); ctx.lineTo(W, y(mean));
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawSpectrum(series) {
+  const c = document.getElementById("spec");
+  const ctx = c.getContext("2d");
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // 简易 DFT：只用前 64 个频点展示低频能量分布
+  const n = 64;
+  const N = series.length;
+  const mean = series.reduce((a, b) => a + b, 0) / N;
+  const mags = [];
+  for (let k = 0; k < n; k++) {
+    let re = 0, im = 0;
+    for (let i = 0; i < N; i++) {
+      const v = series[i] - mean;
+      re += v * Math.cos((2 * Math.PI * k * i) / N);
+      im -= v * Math.sin((2 * Math.PI * k * i) / N);
+    }
+    mags.push(Math.sqrt(re * re + im * im) / N);
+  }
+  const maxMag = Math.max(...mags) || 1;
+  const bw = W / n;
+  for (let k = 0; k < n; k++) {
+    const h = (mags[k] / maxMag) * (H - 16);
+    const grad = ctx.createLinearGradient(0, H - h, 0, H);
+    grad.addColorStop(0, "#38bdf8");
+    grad.addColorStop(1, "#0ea5e9");
+    ctx.fillStyle = grad;
+    ctx.fillRect(k * bw + 1, H - h - 4, bw - 2, h);
+  }
+  ctx.fillStyle = "#64748b";
+  ctx.font = "10px sans-serif";
+  ctx.fillText("频率 →", 4, 12);
+}
+
+/* ============================================================
+   6. 主流程
+   ============================================================ */
+let currentSeries = [];
+
+function getSeries() {
+  const src = document.getElementById("srcType").value;
+  if (src === "sample") {
+    const idx = Number(document.getElementById("samplePick").value);
+    const keys = ["normal", "neighbor", "multipath", "faulty"];
+    return generateSignal(PROFILES[keys[idx]]);
+  }
+  if (src === "manual") {
+    const rssi = Number(document.getElementById("mRssi").value);
+    const snr = Number(document.getElementById("mSnr").value);
+    const loss = Number(document.getElementById("mLoss").value);
+    const jitter = Number(document.getElementById("mJitter").value);
+    const profile = {
+      rssi,
+      snr,
+      loss,
+      jitter,
+      interfere: Math.max(0, 20 - snr) * 1.2,
+      multipath: snr < 15 ? 6 : 1.5,
+    };
+    return generateSignal(profile);
+  }
+  const raw = document.getElementById("pasteData").value;
+  const arr = raw.split(/[\s,，;；]+/).map(Number).filter(v => !isNaN(v) && v < 0);
+  return arr.length >= 8 ? arr : null;
+}
+
+function analyze() {
+  const series = getSeries();
+  if (!series) {
+    alert("请粘贴至少 8 个有效的 RSSI 负值（如 -62,-63,...）");
+    return;
+  }
+  currentSeries = series;
+
+  const sigType = document.getElementById("sigType").value;
+  const features = extractFeatures(series);
+  const result = diagnose(features, sigType);
+
+  drawWave(series);
+  drawSpectrum(series);
+
+  // 指标
+  document.getElementById("mScore").textContent = result.quality;
+  document.getElementById("mScore").style.color =
+    result.quality >= 75 ? "var(--ok)" : result.quality >= 45 ? "var(--warn)" : "var(--bad)";
+  document.getElementById("mRssiOut").textContent = features.mean.toFixed(1) + " dBm";
+  const lossEst = clamp01((features.spikeRate * 1.2) + (Math.abs(features.mean + 90) / 100)) * 18;
+  document.getElementById("mLossOut").textContent = lossEst.toFixed(1) + "%";
+  document.getElementById("mStab").textContent =
+    features.std < 3 ? "稳定" : features.std < 7 ? "一般" : "波动大";
+
+  // 排序病因
+  const ranked = Object.entries(result.probs).sort((a, b) => b[1] - a[1]);
+  const top = ranked[0];
+
+  // 链路健康判定优先于病因判定：电平好、抖动小、丢包低时直接报告"健康"
+  const healthy = features.mean > -65 && features.jitter < 3 && features.spikeRate < 0.12
+                  && result.quality >= 70;
+  const heathMeta = {
+    name: "链路健康",
+    color: "#34d399",
+    suggest: [
+      "信号强度、稳定性与干扰程度三项指标均处于良好区间，暂无需调整。",
+      "建议定期复测并记录基线，便于日后出现劣化时快速对比定位。",
+      "若实际使用中仍感知卡顿，问题可能在路由器的上行带宽或上游运营商侧。",
+    ],
+  };
+  const meta = healthy ? heathMeta : CAUSE_META[top[0]];
+
+  document.getElementById("vTitle").textContent = healthy
+    ? `链路健康（质量评分 ${result.quality}）`
+    : `主要病因：${meta.name}（置信度 ${top[1]}%）`;
+  document.getElementById("vDesc").textContent =
+    healthy
+      ? "当前链路整体健康，建议保持现有配置并定期复测。"
+      : result.quality >= 75
+        ? "整体信号尚可，但存在局部异常，可按下列建议做针对性优化。"
+        : "根据信号特征判断，当前链路存在明显问题，建议按下述顺序处理。";
+  const ul = document.getElementById("vSuggest");
+  ul.innerHTML = "";
+  meta.suggest.forEach(s => {
+    const li = document.createElement("li");
+    li.textContent = s;
+    ul.appendChild(li);
+  });
+  document.getElementById("verdict").style.borderLeftColor = meta.color;
+
+  // 概率条
+  const bars = document.getElementById("bars");
+  bars.innerHTML = "<div class='hint'>各病因可能性分布</div>";
+  ranked.forEach(([k, v]) => {
+    const m = CAUSE_META[k];
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <span class="name">${m.name.split(" ")[0]}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${v}%;background:${m.color}"></span></span>
+      <span class="val">${v}%</span>`;
+    bars.appendChild(row);
+  });
+}
+
+/* ============================================================
+   7. 交互绑定
+   ============================================================ */
+const srcType = document.getElementById("srcType");
+srcType.addEventListener("change", () => {
+  const v = srcType.value;
+  document.getElementById("sampleBox").style.display = v === "sample" ? "" : "none";
+  document.getElementById("manualBox").style.display = v === "manual" ? "" : "none";
+  document.getElementById("pasteBox").style.display = v === "paste" ? "" : "none";
+});
+
+document.getElementById("btnAnalyze").addEventListener("click", analyze);
+
+document.getElementById("btnRandom").addEventListener("click", () => {
+  const keys = Object.keys(PROFILES);
+  const k = keys[Math.floor(Math.random() * keys.length)];
+  const s = generateSignal(PROFILES[k]);
+  currentSeries = s;
+  document.getElementById("srcType").value = "paste";
+  srcType.dispatchEvent(new Event("change"));
+  document.getElementById("pasteData").value = s.map(v => v.toFixed(1)).join(",");
+  analyze();
+});
+
+// 首屏自动跑一次，让页面一打开就有内容
+document.getElementById("samplePick").value = "1";
+analyze();
+</script>
+</body>
+</html>
