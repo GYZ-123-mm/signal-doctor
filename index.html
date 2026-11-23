@@ -208,13 +208,14 @@ const PROFILES = {
 function generateSignal(profile, n = 120, rssiOverride = null) {
   const p = { ...profile };
   if (rssiOverride !== null) p.rssi = rssiOverride;
+    const spikeProb = 0.08;
   const out = [];
   for (let i = 0; i < n; i++) {
     const t = i / n;
     // 周期性衰落（多径）
     const fade = p.multipath * Math.sin(2 * Math.PI * 3.3 * t + 0.7);
     // 干扰尖峰（随机突发）
-    const spike = (Math.random() < 0.08) ? p.interfere * (0.6 + Math.random() * 0.8) : 0;
+    const spike = (Math.random() < spikeProb) ? p.interfere * (0.6 + Math.random() * 0.8) : 0;
     const v = p.rssi + fade - spike + randn() * p.jitter;
     out.push(Math.max(-100, Math.min(-25, v)));
   }
@@ -250,20 +251,25 @@ function extractFeatures(series) {
     if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
   }
 
+  // 真正的周期性判据：不仅自相关高，而且低抖动。
+  // 纯噪声或频繁突刺的序列也会偶然出现较高的自相关峰值，
+  // 但真实的多径衰落是一条平滑的周期曲线，抖动必然很小。
+  const isPeriodic = bestCorr > 0.75 && jitter < 4.5;
+
   // 低频趋势：前半段 vs 后半段
   const half = Math.floor(n / 2);
   const firstHalf = series.slice(0, half).reduce((a, b) => a + b, 0) / half;
   const secondHalf = series.slice(half).reduce((a, b) => a + b, 0) / (n - half);
   const drift = secondHalf - firstHalf;
 
-  return { mean, std, jitter, spikeRate, bestCorr, bestLag, drift, n };
+  return { mean, std, jitter, spikeRate, bestCorr, bestLag, drift, n, isPeriodic };
 }
 
 /* ============================================================
    3. 诊断引擎：加权规则打分 → 输出各病因概率
    ============================================================ */
 function diagnose(features, sigType) {
-  const { mean, std, jitter, spikeRate, bestCorr, drift } = features;
+  const { mean, std, jitter, spikeRate, bestCorr, drift, isPeriodic } = features;
   const scores = {};
 
   // 阈值依据 30 次随机采样得到的特征分布（见报告「四、作品成果展示」的验证数据）：
@@ -271,7 +277,7 @@ function diagnose(features, sigType) {
   //   邻频干扰: jitter 5.0~9.4, spikeRate 0.29~0.51, bestCorr 0.16~0.46, mean -68
   //   多径衰落: jitter 2.2~3.2, spikeRate 0.03~0.13, bestCorr 0.90~1.00, mean -71
   //   设备故障: jitter 10.2~15.0, spikeRate 0.59~0.85, bestCorr 0.15~0.37, mean -80
-  const periodicity = clamp01((bestCorr - 0.55) / 0.35);  // >0.9 视为强周期性
+  const periodicity = isPeriodic ? clamp01((bestCorr - 0.55) / 0.35) : 0;
   const levelHealth = clamp01((mean + 82) / 22);          // -82dBm→0，-60dBm→1
   const weakLevel = clamp01((-mean - 72) / 12);           // 低于 -72dBm 开始显著
 
@@ -307,7 +313,12 @@ function diagnose(features, sigType) {
   const interferenceScore = clamp01(1 - jitter / 9) * 100;
   const quality = Math.round(strengthScore * 0.4 + stabilityScore * 0.35 + interferenceScore * 0.25);
 
-  return { probs, quality, strengthScore, stabilityScore, interferenceScore };
+  // 链路健康判定：四类病因得分都很低时，不应强行归入某类病因。
+  // 判据：电平良好 + 抖动小 + 突刺少 + 无周期性 + 综合评分过关。
+  const healthy =
+    mean > -68 && jitter < 3.2 && spikeRate < 0.12 && !isPeriodic && quality >= 62;
+
+  return { probs, quality, strengthScore, stabilityScore, interferenceScore, healthy };
 }
 
 const clamp01 = x => Math.max(0, Math.min(1, x));
@@ -449,13 +460,15 @@ function getSeries() {
     const snr = Number(document.getElementById("mSnr").value);
     const loss = Number(document.getElementById("mLoss").value);
     const jitter = Number(document.getElementById("mJitter").value);
+    // 手动模式的语义：SNR 越低 → 干扰越强；抖动直接抬高噪声底。
+    // 干扰幅度上限控制在 22dB，避免把"受干扰"合成为"链路故障"。
     const profile = {
       rssi,
       snr,
       loss,
       jitter,
-      interfere: Math.max(0, 20 - snr) * 1.2,
-      multipath: snr < 15 ? 6 : 1.5,
+      interfere: clamp01((24 - snr) / 20) * 22,
+      multipath: 0.8,
     };
     return generateSignal(profile);
   }
@@ -470,6 +483,11 @@ function analyze() {
     alert("请粘贴至少 8 个有效的 RSSI 负值（如 -62,-63,...）");
     return;
   }
+  runDiagnosis(series);
+}
+
+/** 对给定的信号序列执行诊断并渲染结果 */
+function runDiagnosis(series) {
   currentSeries = series;
 
   const sigType = document.getElementById("sigType").value;
@@ -493,9 +511,8 @@ function analyze() {
   const ranked = Object.entries(result.probs).sort((a, b) => b[1] - a[1]);
   const top = ranked[0];
 
-  // 链路健康判定优先于病因判定：电平好、抖动小、丢包低时直接报告"健康"
-  const healthy = features.mean > -65 && features.jitter < 3 && features.spikeRate < 0.12
-                  && result.quality >= 70;
+  // 链路健康判定（由 diagnose 统一返回，避免多处重复判断）
+  const healthy = result.healthy;
   const heathMeta = {
     name: "链路健康",
     color: "#34d399",
@@ -558,15 +575,21 @@ document.getElementById("btnRandom").addEventListener("click", () => {
   const k = keys[Math.floor(Math.random() * keys.length)];
   const s = generateSignal(PROFILES[k]);
   currentSeries = s;
-  document.getElementById("srcType").value = "paste";
-  srcType.dispatchEvent(new Event("change"));
+  // 直接展示随机生成的信号并诊断，不再改写用户已选的输入方式
   document.getElementById("pasteData").value = s.map(v => v.toFixed(1)).join(",");
-  analyze();
+  runDiagnosis(s);
 });
 
-// 首屏自动跑一次，让页面一打开就有内容
-document.getElementById("samplePick").value = "1";
-analyze();
+// 首屏自动跑一次，让页面一打开就有内容（默认：样例 B 邻频干扰）
+window.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("samplePick").value = "1";
+  analyze();
+});
+// 若脚本在 DOM 就绪后才执行，DOMContentLoaded 不会再次触发，补一次兜底
+if (document.readyState === "complete" || document.readyState === "interactive") {
+  document.getElementById("samplePick").value = "1";
+  analyze();
+}
 </script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// 打印各场景的真实特征分布，用于确定阈值
+﻿// 打印各场景的真实特征分布，用于确定阈值
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -17,7 +17,7 @@ const stubEl = () => ({
 });
 const elements = {};
 global.document = { getElementById(id) { if (!elements[id]) elements[id] = stubEl(); return elements[id]; }, createElement: () => stubEl(), querySelector: () => stubEl() };
-global.window = {}; global.alert = () => {};
+global.window = { addEventListener() {} }; global.alert = () => {};
 vm.createContext(global);
 vm.runInContext(script + '\n;globalThis.__T__ = { generateSignal, extractFeatures, PROFILES };', global);
 const { generateSignal, extractFeatures, PROFILES } = globalThis.__T__;

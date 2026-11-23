@@ -1,4 +1,4 @@
-// 多轮随机测试：每个场景跑 30 次，统计正确识别率
+﻿// 多轮随机测试：每个场景跑 30 次，统计正确识别率
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -21,7 +21,7 @@ global.document = {
   getElementById(id) { if (!elements[id]) elements[id] = stubEl(); return elements[id]; },
   createElement: () => stubEl(), querySelector: () => stubEl(),
 };
-global.window = {};
+global.window = { addEventListener() {} };
 global.alert = () => {};
 vm.createContext(global);
 vm.runInContext(script + '\n;globalThis.__T__ = { generateSignal, extractFeatures, diagnose, PROFILES, CAUSE_META };', global);
@@ -45,7 +45,7 @@ for (const [key, expectTop, label] of cases) {
     const s = generateSignal(PROFILES[key]);
     const f = extractFeatures(s);
     const r = diagnose(f, 'wifi24');
-    const healthy = f.mean > -65 && f.jitter < 3 && f.spikeRate < 0.12 && r.quality >= 70;
+    const healthy = r.healthy;
     const top = healthy ? 'healthy' : Object.entries(r.probs).sort((a, b) => b[1] - a[1])[0][0];
     dist[top] = (dist[top] || 0) + 1;
     if (top === expectTop) correct++;
@@ -58,3 +58,4 @@ for (const [key, expectTop, label] of cases) {
 
 rows.forEach(r => console.log(r));
 console.log(`\n总体正确率: ${totalCorrect}/${totalRuns} = ${(totalCorrect / totalRuns * 100).toFixed(1)}%`);
+
